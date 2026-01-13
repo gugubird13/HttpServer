@@ -5,16 +5,6 @@
 namespace ssl
 {
 
-// 自定义 BIO 方法
-static BIO_METHOD* createCustomBioMethod()
-{
-    BIO_METHOD* method = BIO_meth_new(BIO_TYPE_MEM, "custom");
-    BIO_meth_set_write(method, SslConnection::bioWrite);
-    BIO_meth_set_read(method, SslConnection::bioRead);
-    BIO_meth_set_ctrl(method, SslConnection::bioCtrl);
-    return method;
-}
-
 SslConnection::SslConnection(const TcpConnectionPtr& conn, SslContext* ctx)
     : ssl_(nullptr)
     , ctx_(ctx)
@@ -26,7 +16,9 @@ SslConnection::SslConnection(const TcpConnectionPtr& conn, SslContext* ctx)
 {
     // 创建 SSL 对象
     ssl_ = SSL_new(ctx_->getNativeHandle());
-    if(ssl_)
+    LOG_INFO << "SslConnection constructor. ctx pointer: " << ctx 
+             << ", native handle: " << (ctx ? ctx->getNativeHandle() : nullptr);
+    if(!ssl_)
     {
         // ERR_get_error() returns the earliest error code from the thread's error queue and removes the
         // entry. 再利用 ERR_error_string 转换 error code 变成 hunman-readable 的string
@@ -74,6 +66,29 @@ void SslConnection::startHandshake()
     handleHandShake();
 }
 
+/*
+ * 新增功能函数【核心函数】： 数据搬运，把OpenSSL生产的数据搬运到TCP 
+ * 就比如:  
+ *         1. 底层SSL读到了握手数据，现在握手数据在 writeBIO里面躺着，我们要拿出来，交给Tcp去传输
+ *         2. 发送应用数据的时候，ssl默认是发送给了writeBIO就不管了（默认调用SSL_write），但是我们自己清楚这个是virtual的接口，我们要把数据给到Tcp
+*/
+void SslConnection::sendRetrievedData()
+{
+    char buf[4096];
+    // return the amount of pending data
+    int pending = BIO_pending(writeBio_);
+
+    while(pending > 0)
+    {
+        int bytes = BIO_read(writeBio_, buf, std::min(pending, static_cast<int>(sizeof buf)));
+        if(bytes > 0)
+        {
+            conn_->send(buf, bytes); // 在这里真正发出去了
+        }
+        pending = BIO_pending(writeBio_);
+    }
+}
+
 void SslConnection::send(const void* data, size_t len)
 {
     if(state_ != SSLState::ESTABLISHED)
@@ -90,15 +105,8 @@ void SslConnection::send(const void* data, size_t len)
         return;
     }
 
-    char buf[4096];
-    int pending;
-    while((pending = BIO_pending(writeBio_)) > 0){
-        int bytes = BIO_read(writeBio_, buf, std::min(pending, static_cast<int>(sizeof buf)));
-        if(bytes > 0)
-        {
-            conn_->send(buf, bytes);
-        }
-    }
+    // 发送应用数据的时候，也需要搬运，所以这里直接用
+    sendRetrievedData();
 }
 
 void SslConnection::onRead(const TcpConnectionPtr& conn, BufferPtr buf, muduo::Timestamp time)
@@ -126,7 +134,7 @@ void SslConnection::onRead(const TcpConnectionPtr& conn, BufferPtr buf, muduo::T
     if (state_ == SSLState::HANDSHAKE) {
         // 握手阶段：SSL 引擎会从 readBio 里读取握手包进行处理
         handleHandShake();
-
+        // 【更新】 handleHandShake里面现在会调用 sendRetrievedData，所以这里不管
     } else if (state_ == SSLState::ESTABLISHED) {
         // 通信阶段：循环解密数据
         char decryptedData[4096];
@@ -163,12 +171,19 @@ void SslConnection::onRead(const TcpConnectionPtr& conn, BufferPtr buf, muduo::T
         if (hasData && messageCallback_) {
             messageCallback_(conn, &decryptedBuffer, time);
         }
+
+        // 【修复】 即使在已连接状态，OpenSSL 也可能会产生一些协议数据，必须检查并发送
+        sendRetrievedData();
     }
 }
 
 void SslConnection::handleHandShake()
 {
     int ret = SSL_do_handshake(ssl_);
+
+    // 【关键修复】 无论握手是在进行中还是成功，都要检查有没有数据要发送给对方
+    // 加上这一行，就不会出现什么 用户发送 hello， 客户端也认为自己发送了hello 而陷入卡死
+    sendRetrievedData();
 
     if(ret == 1)
     {
@@ -257,6 +272,7 @@ void SslConnection::handleError(SSLError error)
     }
 }
 
+// 下面这俩函数属于custom BIO, 不知道什么时候会用上？这里还是先用 memory BIO吧
 int SslConnection::bioWrite(BIO* bio, const char* data, int len)
 {
     // 这个函数返回的值是void * 的，也就是返回的是自定义的数据类型，和用户自己 custom 的 BIO有关
@@ -283,17 +299,5 @@ int SslConnection::bioRead(BIO* bio, char* data, int len)
     conn->readBuffer_.retrieve(toRead);
     return toRead;
 }
-
-long SslConnection::bioCtrl(BIO* bio, int cmd, long num, void* ptr)
-{
-    switch(cmd)
-    {
-        case BIO_CTRL_FLUSH:
-            return 1;
-        default:
-            return 0;
-    }
-}
-
 
 } // namespace ssl

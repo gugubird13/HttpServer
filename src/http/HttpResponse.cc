@@ -17,7 +17,8 @@ void HttpResponse::appendToBuffer(muduo::net::Buffer* outputBuf) const
     // 这个用于将HttpResponse 封装的信息序列化输出
     char buf[32];
     // 这里不把状态信息比如 ok 这种的放到格式化字符串里面，因为这个信息有长有短，不方便定义一个固定大小的内存存储
-    snprintf(buf, sizeof buf, "%s %d", httpVersion_.c_str(), statusCode_);
+    // snprintf(buf, sizeof buf, "%s %d", httpVersion_.c_str(), statusCode_);
+    snprintf(buf, sizeof buf, "%s %d", "HTTP/1.1", statusCode_);
 
     outputBuf->append(buf);
     outputBuf->append(statusMessage_); // append 状态信息

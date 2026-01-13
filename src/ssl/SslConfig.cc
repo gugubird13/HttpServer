@@ -13,4 +13,6 @@ SslConfig::SslConfig()
 {
 }
 
+SslConfig::~SslConfig() {}
+
 } // namespace ssl

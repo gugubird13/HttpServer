@@ -48,7 +48,7 @@ public:
         }
         catch(const sql::SQLException& e)
         {
-            LOG_ERROR << "Query failed: " << e.waht() << ", SQL: " << sql;
+            LOG_ERROR << "Query failed: " << e.what() << ", SQL: " << sql;
             throw DbException(e.what());
         }
     }
@@ -67,7 +67,7 @@ public:
         catch(const sql::SQLException& e)
         {
             LOG_ERROR << "Update failed: " << e.what() << ", SQL: " << sql;
-            throw DbException(e.waht());
+            throw DbException(e.what());
         }
     }
 
@@ -80,7 +80,7 @@ private:
 
     // 辅助函数：绑定参数
     template <typename T, typename... Args>
-    void bindParams(sql::PreparedStatement* stmt, int index, T&& value, Args&&... agrs)
+    void bindParams(sql::PreparedStatement* stmt, int index, T&& value, Args&&... args)
     {
         stmt->setString(index, std::to_string(std::forward<T>(value)));
         bindParams(stmt, index+1, std::forward<Args>(args)...);

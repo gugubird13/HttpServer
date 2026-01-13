@@ -7,7 +7,7 @@ namespace http
 namespace session
 {
 
-Session::Session(const std::string& sessionId, SessionManager* SessionManager, int maxAge = 3600)
+Session::Session(const std::string& sessionId, SessionManager* SessionManager, int maxAge)
     : sessionId_(sessionId)
     , maxAge_(maxAge)
     , sessionManager_(SessionManager)

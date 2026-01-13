@@ -9,14 +9,14 @@ namespace http
 
 HttpServer::HttpServer(int port,
         const std::string& name,
-        bool useSSL = false,
-        muduo::net::TcpServer::Option option = muduo::net::TcpServer::kNoReusePort)
+        const ssl::SslConfig& sslConfig,
+        muduo::net::TcpServer::Option option)
     : listenAddr_(port)
     , server_(&mainLoop_, listenAddr_, name, option)
-    , useSSL_(useSSL)
     , httpCallback_(std::bind(&HttpServer::handleRequest, this, std::placeholders::_1, std::placeholders::_2))
+    , useSSL_(sslConfig.getCertificateFile() != "")  // 简单的逻辑判断：有证书路径就视为开启
 {
-    initialize();
+    initialize(sslConfig);
 }
 
 // 服务器运行函数
@@ -27,13 +27,18 @@ void HttpServer::start()
     mainLoop_.loop();           // mainLoop 开启其下面的 Poller wait 在对应的 channel上
 }
 
-void HttpServer::initialize()
+void HttpServer::initialize(const ssl::SslConfig& sslConfig)
 {
     // 在这里主要设置两个回调函数
     server_.setConnectionCallback(std::bind(&HttpServer::onConnection, this, std::placeholders::_1));
     // muduo 底层要求信息回调是接受三个参数， 所以我们使用 std::bind 包装成3个参数的函数包装器
     server_.setMessageCallback(std::bind(&HttpServer::onMessage, this,
                             std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+
+    if(useSSL_)
+    {
+        setSslConfig(sslConfig);
+    }
 }
 
 void HttpServer::setSslConfig(const ssl::SslConfig& config)
@@ -56,6 +61,13 @@ void HttpServer::onConnection(const muduo::net::TcpConnectionPtr& conn)
     {
         if(useSSL_)
         {
+            // 【新增安全检查】
+            if(!sslCtx_)
+            {
+                LOG_ERROR << "FATAL: SSL is enabled but SslContext is NULL. Did you forget to call setSslConfig?";
+                conn->shutdown();
+                return;
+            }
             // 如果使用的是SSL，我们就创建context
             // 每一个连接都有一个自己的专属的 SslConnection 对象
             auto sslConn = std::make_unique<ssl::SslConnection>(conn, sslCtx_.get());
@@ -77,7 +89,6 @@ void HttpServer::onConnection(const muduo::net::TcpConnectionPtr& conn)
             // 这个自动就会执行握手协议
             // 也就是说，我们执行 onConnection是不会触发握手的，只有当第一个hello到达的时候，才会执行握手协议，所以
             // 这个握手会发生在 onRead 的方法之下，因此这里不需要设置
-            // sslConnections_[conn]->startHandshake();
         }
         // 这个不管是不是 ssl 都得加上，给这个conn 加一个 context
         // 存一个状态解析器，也就是 context 用来解析请求变成 httpRequest 的
@@ -111,9 +122,21 @@ void HttpServer::onMessage(const muduo::net::TcpConnectionPtr&conn,
     HttpContext *context = boost::any_cast<HttpContext>(conn->getMutableContext());
 
     // 直接解析，这里的buf已经是明文了！！！！
-    if(!context->parseRequest(buf, receiveTime));
+    if(!context->parseRequest(buf, receiveTime))
     {
-        conn->send("HTTP/1.1 400 Bad Request\r\n\r\n");
+        // 【代码修正】 错误消息也要区分 SSL
+        const char* errorMsg = "HTTP/1.1 400 Bad Request\r\n\r\n";
+        if(useSSL_)
+        {
+            auto it = sslConnections_.find(conn);
+            if(it != sslConnections_.end())
+            {
+                it->second->send(errorMsg, strlen(errorMsg));
+            }
+        }
+        else{
+            conn->send(errorMsg);
+        }
         conn->shutdown();
     }
 
@@ -142,8 +165,23 @@ void HttpServer::onRequest(const muduo::net::TcpConnectionPtr& conn, const HttpR
     response.appendToBuffer(&buf);
     // 打印完整的内容响应用于调试
     LOG_INFO << "Sending response:\n" << buf.toStringPiece().as_string();
+    LOG_INFO << "USE SSL ? " << useSSL_;
+    // 【代码修正】发送数据分流处理
+    if(useSSL_)
+    {
+        auto it = sslConnections_.find(conn);
+        if(it != sslConnections_.end())
+        {
+            // 使用 SSL 连接发送（内部会先加密，再通过TCP发送）
+            it->second->send(buf.peek(), buf.readableBytes());  // peek 是传的数据指针
+        }
+    }
+    else{
+        // 普通 HTTP 直接发送明文
+        conn->send(&buf);
+    }
+    // 【修正结束】
 
-    conn->send(&buf);
     // 如果是短链接，返回响应报文之后就断开
     if(response.closeConnection())
     {

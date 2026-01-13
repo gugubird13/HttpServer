@@ -9,7 +9,7 @@ namespace http
 namespace middleware
 {
     
-CorsMiddleware::CorsMiddleware(const CorsConfig& config = CorsConfig::defaultConfig())
+CorsMiddleware::CorsMiddleware(const CorsConfig& config)
     : config_(config)
 {}
 
@@ -126,5 +126,3 @@ std::string CorsMiddleware::join(const std::vector<std::string>& strings, const 
 
 } // namespace middleware
 } // namespace http
-
-

@@ -28,8 +28,8 @@ private:
     static void handleSslError(const char* msg);
 
 private:
-    SSL_CTX *ctx_; // SSL 上下文
-    SslConfig config_; // SSL 配置
+    SSL_CTX     *ctx_; // SSL 上下文
+    SslConfig   config_; // SSL 配置
 };
 
 } // namespace ssl

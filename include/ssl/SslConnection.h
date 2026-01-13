@@ -54,6 +54,7 @@ public:
 
 private:
     void handleHandShake();
+    void sendRetrievedData();
     void onEncrypted(const char* data, size_t len);
     void onDecrypted(const char* data, size_t len);
     SSLError getLastError(int ret);

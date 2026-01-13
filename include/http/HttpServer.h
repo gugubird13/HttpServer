@@ -48,7 +48,7 @@ public:
 
     HttpServer(int port,
             const std::string& name,
-            bool useSSL = false,
+            const ssl::SslConfig& sslConfig = ssl::SslConfig(),  // <----- 必须传进来
             muduo::net::TcpServer::Option option = muduo::net::TcpServer::kNoReusePort);
 
     void setThreadNum(int numThreads)
@@ -123,10 +123,12 @@ public:
         useSSL_ = enable;
     }
 
+    bool getSslStatus() const { return useSSL_; }
+
     void setSslConfig(const ssl::SslConfig& config);
 
 private:
-    void initialize();
+    void initialize(const ssl::SslConfig& config);
     void onConnection(const muduo::net::TcpConnectionPtr& conn);
     void onMessage(const muduo::net::TcpConnectionPtr&conn,
                     muduo::net::Buffer* buf,
